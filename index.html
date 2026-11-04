@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shan &amp; Company</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to content</a>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <h1 class="app-title">Shan &amp; Company</h1>
+      <!-- Real links: the URL hash is the "page", so Back, Refresh and shared links all work. -->
+      <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+        <a class="nav-btn" href="#/dashboard" data-view="dashboard">Dashboard</a>
+        <a class="nav-btn" href="#/products" data-view="products">Products</a>
+        <a class="nav-btn" href="#/sale" data-view="sale">New Sale</a>
+        <a class="nav-btn" href="#/history" data-view="history">Sales History</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Live regions live OUTSIDE #app so screen readers announce changes to them. -->
+  <div id="storage-warning" class="notice warn" role="alert"></div>
+  <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+  <!-- Every page is drawn into this element by app.js -->
+  <main class="app-main" id="app" tabindex="-1"></main>
+
+  <noscript><p class="empty-state">This app needs JavaScript turned on.</p></noscript>
+
+  <footer class="app-footer">
+    <p>Enigamtix IT Solution, Commercial Area, Bahawalpur, Pakistan.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
