@@ -14,6 +14,7 @@ A browser-based inventory and sales application for a small shop (Shan & Company
 8. [Expected user flow](#expected-user-flow)
 9. [Assumptions](#assumptions)
 10. [Limitations](#limitations)
+11. [Automated tests](#automated-tests)
 
 ## Tech stack
 
@@ -24,11 +25,11 @@ A browser-based inventory and sales application for a small shop (Shan & Company
 | Logic | Vanilla JavaScript (ES6+) |
 | Storage | Browser `localStorage` |
 
-No frameworks, no libraries, no backend, no build tools.
+No frameworks, no libraries, no backend, no build tools. The app itself needs nothing but a browser. Node.js is used only to run the optional automated tests (see [Automated tests](#automated-tests)).
 
 ## How to open and run
 
-1. Download or copy the project folder. It must contain `index.html`, `style.css` and `app.js` together.
+1. Download or copy the project folder. It must contain `index.html`, `styles.css` and `app.js` together.
 2. Double-click `index.html`, or right-click it and choose **Open with** your browser (Chrome, Edge, Firefox or Safari).
 3. The app opens on the Dashboard. Use the menu to move between screens.
 
@@ -39,9 +40,13 @@ No installation or server is needed. To start fresh, clear the site data (localS
 ```
 project-folder/
   index.html   page layout and the menu
-  style.css    styling (desktop and mobile)
+  styles.css   styling (desktop and mobile)
   app.js       all the logic
   README.md    this file
+  package.json only holds the "npm test" shortcut (no dependencies)
+  tests/
+    load-app.js   loads app.js inside a fake browser so Node can test it
+    app.test.js   the automated tests
 ```
 
 ### How the code is organised
@@ -83,6 +88,7 @@ state (data)  ->  page function (returns HTML)  ->  #app
   - purchase and selling price must be greater than zero
   - quantity and minimum stock must be whole numbers, zero or more
   - prices and quantity have upper limits (see Business rules)
+- **Warnings** (the product can still be saved): if the selling price is lower than the purchase price, or a product with the same name (ignoring capital letters) already exists in the same category, the form shows a warning and the button changes to **Save Anyway**. Changing any value asks again.
 
 ### Sales and cart
 
@@ -90,7 +96,7 @@ state (data)  ->  page function (returns HTML)  ->  #app
 - In the cart you can increase, decrease or remove each item. Each line shows its unit price and line total. Decreasing below 1 removes the item.
 - Cart quantity can never go above the available stock.
 - The cart summary shows subtotal, discount, discounted subtotal, tax and grand total as separate lines.
-- **Checkout** checks everything first (cart not empty, every product still exists, every quantity is valid and still in stock). Only if all checks pass does it create the sale and reduce the stock. If any check fails, an error is shown and **nothing is changed**, so a failed checkout never partly updates the inventory.
+- **Checkout** checks everything first (cart not empty, every product still exists, every quantity is valid and still in stock). Only if all checks pass does it create the sale and reduce the stock. If any check fails, an error is shown and **nothing is changed**, so a failed checkout never partly updates the inventory. The stock and the sale are also saved together: if saving either one fails (for example storage is full), both are rolled back, an error is shown, and no "Sale completed" message appears.
 - A completed sale gets a unique ID (`SALE-0001`, `SALE-0002`, ...) and a timestamp.
 
 ### Inventory monitoring
@@ -193,3 +199,27 @@ Saved data is restored when the page is refreshed or reopened in the same browse
 - **Discount, tax rate, thresholds and limits are constants in `app.js`.** There is no settings screen to change them.
 - **Only the Dashboard figures and the history list show reports.** There are no charts or export options (CSV or PDF) and no receipt printing.
 - **Search** in the products screen is a simple text match and does not tolerate spelling mistakes.
+
+## Automated tests
+
+The money, validation, ID, cart and checkout logic is covered by automated tests that use Node's built-in test runner (`node --test`). No packages need to be installed.
+
+**How to run them** (needs Node.js 18 or newer):
+
+```
+node --test
+```
+
+or `npm test`. The tests do not open a browser. `tests/load-app.js` runs `app.js` inside a small fake browser (a fake `localStorage` and a fake page), so the real application code is tested, not a copy.
+
+**What is tested (24 tests):**
+
+- **Money**: `toPaisa`, `percentOf` (half-up rounding) and `formatPKR`.
+- **Totals**: the README example (12,000 -> 11,340), the discount boundary (PKR 9,999.99 gets no discount, PKR 10,000 does), and an empty cart.
+- **Saved-data checks**: `sanitizeProduct` and `sanitizeSale` accept good data and reject broken data; duplicate IDs are dropped; damaged JSON is backed up under `<key>_corrupt_backup`.
+- **IDs**: `nextNumber`, product IDs never reuse a deleted product's ID found in sales history, and sale IDs are padded to four digits.
+- **Stock and reports**: low-stock and out-of-stock status, inventory cost value, top-selling product (including the revenue tie-break) and the local-date key used by the sales date filter.
+- **Cart**: quantity can never go above stock, decreasing below 1 removes the line, and the cart is trimmed when stock changes.
+- **Checkout**: a good checkout reduces stock and records the sale; an empty cart or too much quantity changes nothing; and if saving the sale fails, stock, sales and the cart are all rolled back.
+
+**What is not tested:** how the pages look and the clicks and typing in a real browser. The screens were checked by hand using the user flow above. The functions that only build HTML are also not tested one by one.
