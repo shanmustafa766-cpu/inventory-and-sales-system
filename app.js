@@ -57,6 +57,8 @@ const state = {
     formId: "",
     form: emptyForm(),
     formError: "",
+    formWarning: "", // soft warning (below-cost price, duplicate name) shown before "Save anyway"
+    warnKey: "", // the exact form values the user has already been warned about
     deleteId: null, // product waiting for a second "Sure?" click
     saleSearch: "",
     saleDate: "",
@@ -440,8 +442,9 @@ function productFormHtml(categories) {
     field("min", "Minimum Stock", "number", f.min, ' min="0" step="1" placeholder="5"') +
     "</div>" +
     (ui.formError ? '<p class="form-error" role="alert">' + esc(ui.formError) + "</p>" : "") +
+    (ui.formWarning ? '<p class="form-warning" role="alert">' + esc(ui.formWarning) + "</p>" : "") +
     '<div class="form-actions">' +
-    '<button type="submit" class="btn btn-primary" data-fk="save-product">Save Product</button>' +
+    '<button type="submit" class="btn btn-primary" data-fk="save-product">' + (ui.formWarning ? "Save Anyway" : "Save Product") + "</button>" +
     '<button type="button" class="btn" data-action="cancel-form" data-fk="cancel-form">Cancel</button>' +
     "</div></form></div>"
   );
@@ -735,6 +738,8 @@ function openForm() {
   ui.formId = generateProductId();
   ui.form = emptyForm();
   ui.formError = "";
+  ui.formWarning = "";
+  ui.warnKey = "";
   state.focus = "pf-name";
   render();
 }
@@ -755,6 +760,8 @@ function editProduct(id) {
     min: String(p.minStock),
   };
   ui.formError = "";
+  ui.formWarning = "";
+  ui.warnKey = "";
   state.focus = "pf-name";
   render();
 }
@@ -765,6 +772,8 @@ function closeForm() {
   ui.editingId = null;
   ui.form = emptyForm();
   ui.formError = "";
+  ui.formWarning = "";
+  ui.warnKey = "";
   state.focus = "btn-open-product-form";
   render();
 }
@@ -792,6 +801,7 @@ function submitProduct() {
 
   const fail = (message) => {
     ui.formError = message;
+    ui.formWarning = "";
     render();
   };
 
@@ -816,6 +826,27 @@ function submitProduct() {
   if (editingId && !getProduct(editingId)) {
     closeForm();
     notify("That product no longer exists (it was deleted in another tab).");
+    return;
+  }
+
+  // Soft warnings: the user can still save, but only after seeing them once.
+  const warnings = [];
+  if (sellingPrice < purchasePrice) {
+    warnings.push("The selling price is lower than the purchase price, so every sale of this product will lose money.");
+  }
+  const duplicate = state.products.find(
+    (p) => p.id !== editingId && p.category.toLowerCase() === category.toLowerCase() && p.name.toLowerCase() === name.toLowerCase()
+  );
+  if (duplicate) {
+    warnings.push("A product named \"" + duplicate.name + "\" already exists in " + duplicate.category + " (" + duplicate.id + ").");
+  }
+  const warnKey = [editingId || "", name, category, purchasePrice, sellingPrice].join("|");
+  if (warnings.length > 0 && ui.warnKey !== warnKey) {
+    ui.warnKey = warnKey;
+    ui.formError = "";
+    ui.formWarning = warnings.join(" ") + " Press Save Anyway to continue, or change the values.";
+    state.focus = "save-product";
+    render();
     return;
   }
 
@@ -927,14 +958,30 @@ function checkout() {
     total: t.grand,
   };
 
+  // Keep the old data, so a failed save can be undone completely.
+  const oldProducts = state.products;
+  const oldSales = state.sales;
+  const canSave = storageOk; // without storage the app runs in memory only (the warning is already shown)
+
   // Everything was checked above, so stock can't go below zero here.
   state.products = state.products.map((p) => {
     const item = items.find((i) => i.productId === p.id);
     return item ? { ...p, quantity: p.quantity - item.quantity } : p;
   });
   state.sales = [sale].concat(state.sales);
-  saveProducts();
-  saveSales();
+
+  if (canSave && !(saveProducts() && saveSales())) {
+    // One of the two writes failed: put memory and storage back as they were.
+    state.products = oldProducts;
+    state.sales = oldSales;
+    try {
+      localStorage.setItem(STORAGE_KEYS.products, JSON.stringify(oldProducts));
+      localStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(oldSales));
+    } catch {
+      /* storage is not writable, so there is nothing newer in it to undo */
+    }
+    return fail("The sale could not be saved because browser storage is full or unavailable. Nothing was changed.");
+  }
   state.cart = [];
 
   notify("Sale " + sale.id + " completed: " + formatPKR(sale.total) + ".");
@@ -982,6 +1029,7 @@ app.addEventListener("input", (event) => {
   const field = t.getAttribute("data-field");
   if (field) {
     state.ui.form[field] = t.value;
+    state.ui.warnKey = ""; // the values changed, so a new warning check is needed
   } else if (t.id === "product-search") {
     state.ui.search = t.value;
     render();
