@@ -80,6 +80,7 @@ state (data)  ->  page function (returns HTML)  ->  #app
 - Product IDs are created automatically in the form `PRD-001`, `PRD-002`, and so on. The ID field is read-only, so **duplicate IDs cannot be entered**. The ID is generated again at the moment of saving, so two browser tabs cannot create the same ID.
 - Products are shown in a table with stock value and a status badge: **In Stock**, **Low Stock** or **Out of Stock**.
 - **Search** works on product ID, name and category.
+- **Category spelling**: if you type a category that already exists with different capital letters (for example `electronics` when `Electronics` exists), the existing spelling is used, so the category filter never shows two versions of the same category.
 - **Filter** by category with the dropdown. **Sort** by name, selling price or quantity.
 - **Edit** opens the same form with the product's current values.
 - **Delete** asks for confirmation: the first click changes the button to **Sure?**, and a second click within 3 seconds deletes the product. If you do nothing, the button goes back to normal.
@@ -88,7 +89,7 @@ state (data)  ->  page function (returns HTML)  ->  #app
   - purchase and selling price must be greater than zero
   - quantity and minimum stock must be whole numbers, zero or more
   - prices and quantity have upper limits (see Business rules)
-- **Warnings** (the product can still be saved): if the selling price is lower than the purchase price, or a product with the same name (ignoring capital letters) already exists in the same category, the form shows a warning and the button changes to **Save Anyway**. Changing any value asks again.
+- **Warnings** (the product can still be saved): if the selling price is lower than the purchase price, or a product with the same name (ignoring capital letters) already exists in the same category, the form shows a warning and the button changes to **Save Anyway**. Changing any value asks again. When you edit an existing product, a warning appears only for what you changed: the below-cost warning only if a price changed, and the duplicate-name warning only if the name or category changed. So restocking a product you already accepted does not need a second click.
 
 ### Sales and cart
 
@@ -96,7 +97,7 @@ state (data)  ->  page function (returns HTML)  ->  #app
 - In the cart you can increase, decrease or remove each item. Each line shows its unit price and line total. Decreasing below 1 removes the item.
 - Cart quantity can never go above the available stock.
 - The cart summary shows subtotal, discount, discounted subtotal, tax and grand total as separate lines.
-- **Checkout** checks everything first (cart not empty, every product still exists, every quantity is valid and still in stock). Only if all checks pass does it create the sale and reduce the stock. If any check fails, an error is shown and **nothing is changed**, so a failed checkout never partly updates the inventory. The stock and the sale are also saved together: if saving either one fails (for example storage is full), both are rolled back, an error is shown, and no "Sale completed" message appears.
+- **Checkout** checks everything first (cart not empty, every product still exists, every quantity is valid and still in stock). Only if all checks pass does it create the sale and reduce the stock. If any check fails, an error is shown and **nothing is changed**, so a failed checkout never partly updates the inventory. The stock and the sale are also saved together: if saving either one fails (for example storage is full), both are rolled back, the cart is kept, an error is shown, and no "Sale completed" message appears. Pressing **Checkout** again tries to save again, so once storage works the sale is really saved. A failed save never switches the app to "memory only" mode. Adding, editing or deleting a product is undone in the same way if its save fails.
 - A completed sale gets a unique ID (`SALE-0001`, `SALE-0002`, ...) and a timestamp.
 
 ### Inventory monitoring
@@ -162,7 +163,8 @@ Saved data is restored when the page is refreshed or reopened in the same browse
 - If nothing is saved yet, the app starts with empty lists.
 - Every saved entry is checked when loading. Entries with missing or wrong values are skipped, and duplicate product IDs are dropped.
 - If the stored text is not valid data at all, a copy is first kept under `<key>_corrupt_backup`, and the app starts with an empty list instead of crashing.
-- If localStorage is not available (for example some private modes), the app still works for the session and shows a warning that changes will be lost on refresh.
+- If localStorage is not available at all when the page opens (for example some private modes), the app still works for the session and shows a warning that changes will be lost on refresh.
+- If storage works but one save fails (for example it is full), the app shows a different message ("could not be saved"), undoes that change so that screen and storage never disagree, and tries to save again on the next attempt. The message disappears after the next successful save.
 - If the app is open in two tabs, a change in one tab is loaded in the other, and important actions (save, delete, checkout) always load the newest data first.
 
 ## Expected user flow
@@ -212,7 +214,7 @@ node --test
 
 or `npm test`. The tests do not open a browser. `tests/load-app.js` runs `app.js` inside a small fake browser (a fake `localStorage` and a fake page), so the real application code is tested, not a copy.
 
-**What is tested (24 tests):**
+**What is tested (38 tests):**
 
 - **Money**: `toPaisa`, `percentOf` (half-up rounding) and `formatPKR`.
 - **Totals**: the README example (12,000 -> 11,340), the discount boundary (PKR 9,999.99 gets no discount, PKR 10,000 does), and an empty cart.
@@ -221,5 +223,9 @@ or `npm test`. The tests do not open a browser. `tests/load-app.js` runs `app.js
 - **Stock and reports**: low-stock and out-of-stock status, inventory cost value, top-selling product (including the revenue tie-break) and the local-date key used by the sales date filter.
 - **Cart**: quantity can never go above stock, decreasing below 1 removes the line, and the cart is trimmed when stock changes.
 - **Checkout**: a good checkout reduces stock and records the sale; an empty cart or too much quantity changes nothing; and if saving the sale fails, stock, sales and the cart are all rolled back.
+- **Checkout pressed again after a failed save**: it keeps failing while storage fails (no "completed" message for an unsaved sale), and it really saves, in memory and in storage, once storage works again.
+- **Product form warnings** (`productWarnings`): below-cost price, duplicate name ignoring capital letters and spaces, no conflict when editing a product against itself, no repeated warning when only the quantity of an accepted product changes, and a warning when an edit changes the name or a price.
+- **Product form flow**: the first Save shows the warning and the second Save saves, changing a value asks again, a failed product save is undone and works once storage is back.
+- **Category spelling** (`canonicalCategory`): an existing spelling is reused, and a product can still fix the spelling of its own category.
 
-**What is not tested:** how the pages look and the clicks and typing in a real browser. The screens were checked by hand using the user flow above. The functions that only build HTML are also not tested one by one.
+**What is not tested:** how the pages look and the clicks and typing in a real browser. The screens were checked by hand using the user flow above. The tests were also checked by putting old bugs back into a scratch copy (for example the "memory only after one failed save" behaviour): the matching tests failed, as they should. The functions that only build HTML are also not tested one by one.
