@@ -107,6 +107,12 @@ function hasOwn(obj, key) {
 
 /* ------------------------- Storage ------------------------- */
 
+// Two different problems are kept apart on purpose:
+//   storageOk  - false only if storage never worked at all (the start-up test failed).
+//                The app then runs in memory only, and the user is told so.
+//   saveFailed - true after ONE write failed (for example storage is full).
+//                The app stays in normal mode: the action is undone, an error is shown,
+//                and the next attempt tries to write again.
 let storageOk = (() => {
   try {
     const probe = "__probe__" + Date.now();
@@ -117,10 +123,16 @@ let storageOk = (() => {
     return false;
   }
 })();
+let saveFailed = false;
 
 function showStorageWarning() {
   warningEl.textContent =
     "Storage is unavailable in this browser, so changes will be lost when you refresh or close this page.";
+}
+
+function showSaveWarning() {
+  warningEl.textContent =
+    "The last change could not be saved because browser storage is full or blocked. Free some space and try again.";
 }
 
 function sanitizeProduct(raw) {
@@ -221,10 +233,16 @@ function writeList(key, list) {
   if (!storageOk) return false;
   try {
     localStorage.setItem(key, JSON.stringify(list));
+    if (saveFailed) {
+      saveFailed = false;
+      warningEl.textContent = ""; // saving works again, so remove the old warning
+    }
     return true;
   } catch {
-    storageOk = false;
-    showStorageWarning();
+    // Do NOT switch to memory-only mode here. The caller undoes its change,
+    // and the next attempt will try to write again.
+    saveFailed = true;
+    showSaveWarning();
     return false;
   }
 }
@@ -343,6 +361,49 @@ function getTopSeller() {
   if (best === null) return null;
   const product = getProduct(best);
   return { name: product ? product.name : names.get(best), units: units.get(best), revenue: revenue.get(best) / 100 };
+}
+
+// Same text ignoring spaces at the ends and capital/small letters.
+function sameText(a, b) {
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
+// If the category matches an existing one (ignoring capital letters), use the existing spelling,
+// so "electronics" and "Electronics" never become two filter entries.
+// The product being edited is skipped, so a user can still fix the spelling of its own category.
+function canonicalCategory(category, products, editingId) {
+  const existing = products.find((p) => p.id !== editingId && sameText(p.category, category));
+  return existing ? existing.category : category;
+}
+
+// The soft warnings of the product form (the user may still save after seeing them once).
+// It only reads its arguments, so it can be tested without a browser.
+//   values:    { name, category, purchasePrice, sellingPrice }  (already trimmed, prices are numbers)
+//   products:  the current product list
+//   editingId: id of the product being edited, or null for a new product
+// To avoid nagging on every restock, an edit only warns about something it changes:
+//   - the below-cost warning only if a price changed
+//   - the duplicate-name warning only if the name or category changed
+function productWarnings(values, products, editingId) {
+  const warnings = [];
+  const old = editingId ? products.find((p) => p.id === editingId) : null;
+
+  const pricesChanged =
+    !old || round2(values.purchasePrice) !== old.purchasePrice || round2(values.sellingPrice) !== old.sellingPrice;
+  if (pricesChanged && values.sellingPrice < values.purchasePrice) {
+    warnings.push("The selling price is lower than the purchase price, so every sale of this product will lose money.");
+  }
+
+  const nameChanged = !old || !sameText(old.name, values.name) || !sameText(old.category, values.category);
+  if (nameChanged) {
+    const duplicate = products.find(
+      (p) => p.id !== editingId && sameText(p.name, values.name) && sameText(p.category, values.category)
+    );
+    if (duplicate) {
+      warnings.push('A product named "' + duplicate.name + '" already exists in ' + duplicate.category + " (" + duplicate.id + ").");
+    }
+  }
+  return warnings;
 }
 
 function saleDateKey(sale) {
@@ -806,7 +867,7 @@ function submitProduct() {
   };
 
   const name = f.name.trim();
-  const category = f.category.trim();
+  const typedCategory = f.category.trim();
   const num = (text) => (text.trim() === "" ? NaN : Number(text));
   const purchasePrice = num(f.purchase);
   const sellingPrice = num(f.selling);
@@ -814,7 +875,7 @@ function submitProduct() {
   const minStock = num(f.min);
 
   if (!name) return fail("Product name is required.");
-  if (!category) return fail("Category is required.");
+  if (!typedCategory) return fail("Category is required.");
   if (!Number.isFinite(purchasePrice) || purchasePrice <= 0) return fail("Purchase price must be a positive number greater than zero.");
   if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) return fail("Selling price must be a positive number greater than zero.");
   if (purchasePrice > MAX_PRICE || sellingPrice > MAX_PRICE) return fail("Price cannot be more than " + formatPKR(MAX_PRICE) + ".");
@@ -829,17 +890,15 @@ function submitProduct() {
     return;
   }
 
+  // Reuse the spelling of an existing category (ignoring capital letters).
+  const category = canonicalCategory(typedCategory, state.products, editingId);
+
   // Soft warnings: the user can still save, but only after seeing them once.
-  const warnings = [];
-  if (sellingPrice < purchasePrice) {
-    warnings.push("The selling price is lower than the purchase price, so every sale of this product will lose money.");
-  }
-  const duplicate = state.products.find(
-    (p) => p.id !== editingId && p.category.toLowerCase() === category.toLowerCase() && p.name.toLowerCase() === name.toLowerCase()
+  const warnings = productWarnings(
+    { name: name, category: category, purchasePrice: purchasePrice, sellingPrice: sellingPrice },
+    state.products,
+    editingId
   );
-  if (duplicate) {
-    warnings.push("A product named \"" + duplicate.name + "\" already exists in " + duplicate.category + " (" + duplicate.id + ").");
-  }
   const warnKey = [editingId || "", name, category, purchasePrice, sellingPrice].join("|");
   if (warnings.length > 0 && ui.warnKey !== warnKey) {
     ui.warnKey = warnKey;
@@ -860,10 +919,15 @@ function submitProduct() {
     minStock: minStock,
   };
 
+  const oldProducts = state.products;
   state.products = editingId
     ? state.products.map((p) => (p.id === editingId ? clean : p))
     : state.products.concat([clean]);
-  saveProducts();
+  if (storageOk && !saveProducts()) {
+    // Not saved, so undo it. Otherwise the product would vanish at the next refresh.
+    state.products = oldProducts;
+    return fail("The product could not be saved because browser storage is full or blocked. Nothing was changed.");
+  }
   pruneCart();
   notify((editingId ? "Updated " : "Added ") + clean.name + " (" + clean.id + ").");
   closeForm();
@@ -889,9 +953,17 @@ function deleteProduct(id) {
   clearTimeout(deleteProduct.timer);
   ui.deleteId = null;
   refreshFromStorage();
+  const oldProducts = state.products;
+  const oldCart = state.cart;
   state.products = state.products.filter((x) => x.id !== id);
   state.cart = state.cart.filter((l) => l.productId !== id);
-  saveProducts();
+  if (storageOk && !saveProducts()) {
+    state.products = oldProducts; // not saved, so undo it
+    state.cart = oldCart;
+    notify("Could not delete " + p.name + " because browser storage is full or blocked.");
+    render();
+    return;
+  }
   notify("Deleted " + p.name + ".");
   state.focus = "btn-open-product-form";
   render();
@@ -961,7 +1033,9 @@ function checkout() {
   // Keep the old data, so a failed save can be undone completely.
   const oldProducts = state.products;
   const oldSales = state.sales;
-  const canSave = storageOk; // without storage the app runs in memory only (the warning is already shown)
+  // storageOk is false only when storage never worked (memory-only mode, warning already shown).
+  // A single failed write does NOT turn it off, so pressing Checkout again tries to save again.
+  const canSave = storageOk;
 
   // Everything was checked above, so stock can't go below zero here.
   state.products = state.products.map((p) => {
@@ -976,11 +1050,15 @@ function checkout() {
     state.sales = oldSales;
     try {
       localStorage.setItem(STORAGE_KEYS.products, JSON.stringify(oldProducts));
+    } catch {
+      /* the write that failed left nothing newer behind */
+    }
+    try {
       localStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(oldSales));
     } catch {
-      /* storage is not writable, so there is nothing newer in it to undo */
+      /* same here */
     }
-    return fail("The sale could not be saved because browser storage is full or unavailable. Nothing was changed.");
+    return fail("The sale could not be saved because browser storage is full or blocked. Nothing was changed. Press Checkout to try again.");
   }
   state.cart = [];
 
