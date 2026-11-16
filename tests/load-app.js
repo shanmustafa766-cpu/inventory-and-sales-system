@@ -1,4 +1,3 @@
-
 "use strict";
 // Loads app.js inside a fake browser (no real DOM), so its functions can be tested with node --test.
 const fs = require("node:fs");
@@ -22,6 +21,7 @@ function loadApp(options = {}) {
 
   const elements = {};
   const makeElement = () => ({
+    value: "", // form fields: tests can set .value like a user typing
     textContent: "",
     innerHTML: "",
     addEventListener() {},
