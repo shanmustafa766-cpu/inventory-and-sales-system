@@ -1,4 +1,3 @@
-
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -265,4 +264,175 @@ test("checkout rolls everything back when saving the sale fails", () => {
   assert.equal(app.state.sales.length, 0);
   assert.equal(app.state.cart.length, 1); // cart is kept so the user can try again
   assert.equal(JSON.parse(app.store[PRODUCTS_KEY])[0].quantity, 5); // and in storage
+});
+
+/* ---------- checkout pressed again after a failed save ---------- */
+
+test("pressing Checkout again while saving still fails never 'completes' an unsaved sale", () => {
+  const app = appWithCart(2);
+  app.control.failKey = SALES_KEY;
+  app.sandbox.checkout();
+  app.sandbox.checkout(); // second press, storage still failing
+  assert.match(app.state.ui.checkoutError, /could not be saved/);
+  assert.equal(app.state.sales.length, 0);
+  assert.equal(app.state.products[0].quantity, 5);
+  assert.equal(app.run("storageOk"), true); // one failed write does not switch to memory-only mode
+  assert.equal(app.state.cart.length, 1);
+});
+
+test("after a failed save, Checkout tries to write again and really saves once storage works", () => {
+  const app = appWithCart(2);
+  app.control.failKey = SALES_KEY;
+  app.sandbox.checkout();
+  assert.equal(app.run("saveFailed"), true);
+  assert.doesNotMatch(app.sandbox.document.getElementById("storage-warning").textContent, /unavailable in this browser/);
+
+  app.control.failKey = null; // storage works again
+  app.sandbox.checkout();
+  assert.equal(app.state.ui.checkoutError, "");
+  assert.equal(app.state.sales.length, 1);
+  assert.equal(app.state.products[0].quantity, 3);
+  assert.equal(app.state.cart.length, 0);
+  // and it is really in storage, not only in memory
+  assert.equal(JSON.parse(app.store[PRODUCTS_KEY])[0].quantity, 3);
+  assert.equal(JSON.parse(app.store[SALES_KEY]).length, 1);
+  assert.equal(app.run("saveFailed"), false);
+  assert.equal(app.sandbox.document.getElementById("storage-warning").textContent, "");
+});
+
+test("when storage never worked, checkout still runs in memory only (the start-up warning covers it)", () => {
+  const app = loadApp();
+  app.run("storageOk = false");
+  app.state.products = [product({ quantity: 5 })];
+  app.state.cart = [{ productId: "PRD-001", quantity: 2 }];
+  app.sandbox.checkout();
+  assert.equal(app.state.sales.length, 1);
+  assert.equal(app.state.products[0].quantity, 3);
+});
+
+/* ---------- product form warnings (pure function) ---------- */
+
+const values = (o) => Object.assign({ name: "Wireless Mouse", category: "Electronics", purchasePrice: 1200, sellingPrice: 1800 }, o);
+
+test("productWarnings: below-cost price on a new product", () => {
+  const { sandbox } = loadApp();
+  const w = sandbox.productWarnings(values({ purchasePrice: 500, sellingPrice: 100 }), [], null);
+  assert.equal(w.length, 1);
+  assert.match(w[0], /lower than the purchase price/);
+  assert.equal(sandbox.productWarnings(values({ purchasePrice: 500, sellingPrice: 500 }), [], null).length, 0); // equal is fine
+});
+
+test("productWarnings: duplicate name ignores capital letters and spaces, and names the existing id", () => {
+  const { sandbox } = loadApp();
+  const list = [product({ id: "PRD-007" })];
+  const w = sandbox.productWarnings(values({ name: "  wireless MOUSE ", category: " electronics" }), list, null);
+  assert.equal(w.length, 1);
+  assert.match(w[0], /PRD-007/);
+  // same name in another category is not a duplicate
+  assert.equal(sandbox.productWarnings(values({ category: "Office" }), list, null).length, 0);
+});
+
+test("productWarnings: editing a product never conflicts with itself", () => {
+  const { sandbox } = loadApp();
+  const list = [product()];
+  assert.equal(sandbox.productWarnings(values(), list, "PRD-001").length, 0);
+});
+
+test("productWarnings: restocking an accepted duplicate or below-cost product does not warn again", () => {
+  const { sandbox } = loadApp();
+  const list = [product({ id: "PRD-001" }), product({ id: "PRD-002", name: "wireless mouse", purchasePrice: 500, sellingPrice: 100 })];
+  // edit PRD-002 and change nothing about name, category or prices (for example only the quantity)
+  const same = values({ name: "wireless mouse", purchasePrice: 500, sellingPrice: 100 });
+  assert.equal(sandbox.productWarnings(same, list, "PRD-002").length, 0);
+});
+
+test("productWarnings: an edit that changes the name or a price still warns", () => {
+  const { sandbox } = loadApp();
+  const list = [product({ id: "PRD-001" }), product({ id: "PRD-002", name: "Keyboard" })];
+  // rename PRD-002 to the name of PRD-001
+  const renamed = sandbox.productWarnings(values({ name: "Wireless Mouse" }), list, "PRD-002");
+  assert.equal(renamed.length, 1);
+  assert.match(renamed[0], /already exists/);
+  // lower the selling price of PRD-001 below cost
+  const cheaper = sandbox.productWarnings(values({ sellingPrice: 900 }), list, "PRD-001");
+  assert.equal(cheaper.length, 1);
+  assert.match(cheaper[0], /lower than the purchase price/);
+});
+
+/* ---------- category spelling ---------- */
+
+test("canonicalCategory reuses the existing spelling, ignoring capital letters", () => {
+  const { sandbox } = loadApp();
+  const list = [product({ category: "Electronics" })];
+  assert.equal(sandbox.canonicalCategory("electronics", list, null), "Electronics");
+  assert.equal(sandbox.canonicalCategory("ELECTRONICS ", list, null), "Electronics");
+  assert.equal(sandbox.canonicalCategory("Office", list, null), "Office"); // a new category stays as typed
+});
+
+test("canonicalCategory lets a product fix the spelling of its own category", () => {
+  const { sandbox } = loadApp();
+  const list = [product({ id: "PRD-001", category: "electronics" })];
+  assert.equal(sandbox.canonicalCategory("Electronics", list, "PRD-001"), "Electronics");
+});
+
+/* ---------- the product form end to end (fake form fields) ---------- */
+
+function typeIntoForm(app, fields) {
+  for (const [name, value] of Object.entries(fields)) {
+    app.sandbox.document.getElementById("pf-" + name).value = String(value);
+  }
+}
+
+function appWithOneProduct() {
+  const app = loadApp({ storage: { [PRODUCTS_KEY]: JSON.stringify([product()]) } });
+  app.state.products = JSON.parse(app.store[PRODUCTS_KEY]);
+  app.sandbox.openForm();
+  return app;
+}
+
+test("below-cost product: the first Save shows the warning, the second Save saves", () => {
+  const app = appWithOneProduct();
+  typeIntoForm(app, { name: "Cable", category: "Electronics", purchase: 500, selling: 100, quantity: 10, min: 2 });
+
+  app.sandbox.submitProduct();
+  assert.match(app.state.ui.formWarning, /lower than the purchase price/);
+  assert.equal(app.state.products.length, 1); // nothing saved yet
+
+  app.sandbox.submitProduct(); // "Save Anyway"
+  assert.equal(app.state.products.length, 2);
+  assert.equal(app.state.ui.formWarning, "");
+  assert.equal(JSON.parse(app.store[PRODUCTS_KEY]).length, 2);
+});
+
+test("changing a value after the warning asks again", () => {
+  const app = appWithOneProduct();
+  typeIntoForm(app, { name: "Cable", category: "Electronics", purchase: 500, selling: 100, quantity: 10, min: 2 });
+  app.sandbox.submitProduct(); // warning shown
+  typeIntoForm(app, { selling: 200 }); // still below cost, but a different value
+  app.state.ui.warnKey = ""; // the input listener clears this when the user types
+  app.sandbox.submitProduct();
+  assert.match(app.state.ui.formWarning, /lower than the purchase price/);
+  assert.equal(app.state.products.length, 1);
+});
+
+test("saving 'electronics' reuses the existing 'Electronics' spelling", () => {
+  const app = appWithOneProduct();
+  typeIntoForm(app, { name: "Keyboard", category: "electronics", purchase: 800, selling: 1500, quantity: 4, min: 1 });
+  app.sandbox.submitProduct();
+  assert.equal(app.state.products.length, 2);
+  assert.equal(app.state.products[1].category, "Electronics");
+});
+
+test("a failed product save is undone, and works when storage comes back", () => {
+  const app = appWithOneProduct();
+  typeIntoForm(app, { name: "Keyboard", category: "Electronics", purchase: 800, selling: 1500, quantity: 4, min: 1 });
+  app.control.failKey = PRODUCTS_KEY;
+  app.sandbox.submitProduct();
+  assert.match(app.state.ui.formError, /could not be saved/);
+  assert.equal(app.state.products.length, 1);
+
+  app.control.failKey = null;
+  app.sandbox.submitProduct();
+  assert.equal(app.state.products.length, 2);
+  assert.equal(JSON.parse(app.store[PRODUCTS_KEY]).length, 2);
 });
