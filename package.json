@@ -1,0 +1,9 @@
+{
+  "name": "shan-inventory-and-sales",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart Inventory & Sales Management System (vanilla JavaScript, no dependencies)",
+  "scripts": {
+    "test": "node --test"
+  }
+}
