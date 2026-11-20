@@ -214,7 +214,7 @@ node --test
 
 or `npm test`. The tests do not open a browser. `tests/load-app.js` runs `app.js` inside a small fake browser (a fake `localStorage` and a fake page), so the real application code is tested, not a copy.
 
-**What is tested (38 tests):**
+**What is tested (39 tests):**
 
 - **Money**: `toPaisa`, `percentOf` (half-up rounding) and `formatPKR`.
 - **Totals**: the README example (12,000 -> 11,340), the discount boundary (PKR 9,999.99 gets no discount, PKR 10,000 does), and an empty cart.
@@ -226,6 +226,7 @@ or `npm test`. The tests do not open a browser. `tests/load-app.js` runs `app.js
 - **Checkout pressed again after a failed save**: it keeps failing while storage fails (no "completed" message for an unsaved sale), and it really saves, in memory and in storage, once storage works again.
 - **Product form warnings** (`productWarnings`): below-cost price, duplicate name ignoring capital letters and spaces, no conflict when editing a product against itself, no repeated warning when only the quantity of an accepted product changes, and a warning when an edit changes the name or a price.
 - **Product form flow**: the first Save shows the warning and the second Save saves, changing a value asks again, a failed product save is undone and works once storage is back.
+- **Delete when saving fails**: the product and the cart stay as they were, and the delete works once storage is back.
 - **Category spelling** (`canonicalCategory`): an existing spelling is reused, and a product can still fix the spelling of its own category.
 
 **What is not tested:** how the pages look and the clicks and typing in a real browser. The screens were checked by hand using the user flow above. The tests were also checked by putting old bugs back into a scratch copy (for example the "memory only after one failed save" behaviour): the matching tests failed, as they should. The functions that only build HTML are also not tested one by one.
