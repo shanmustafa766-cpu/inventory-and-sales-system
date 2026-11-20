@@ -436,3 +436,23 @@ test("a failed product save is undone, and works when storage comes back", () =>
   assert.equal(app.state.products.length, 2);
   assert.equal(JSON.parse(app.store[PRODUCTS_KEY]).length, 2);
 });
+
+/* ---------- deleting a product when saving fails ---------- */
+
+test("a failed delete is undone (product and cart stay), and works when storage comes back", () => {
+  const app = appWithCart(2);
+  app.control.failKey = PRODUCTS_KEY;
+  app.sandbox.deleteProduct("PRD-001"); // first click: "Sure?"
+  app.sandbox.deleteProduct("PRD-001"); // second click: tries to delete, but saving fails
+  assert.equal(app.state.products.length, 1);
+  assert.equal(app.state.cart.length, 1);
+  assert.equal(JSON.parse(app.store[PRODUCTS_KEY]).length, 1); // still in storage, so no surprise at the next refresh
+  assert.equal(app.run("saveFailed"), true);
+
+  app.control.failKey = null;
+  app.sandbox.deleteProduct("PRD-001");
+  app.sandbox.deleteProduct("PRD-001");
+  assert.equal(app.state.products.length, 0);
+  assert.equal(app.state.cart.length, 0);
+  assert.equal(JSON.parse(app.store[PRODUCTS_KEY]).length, 0);
+});
